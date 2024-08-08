@@ -12,6 +12,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: Install dependencies
+        # both gpgme and btrfs are requirements for managing container
+        # images (i.e. cmd/release/save).
+        run: |
+          apt install -y libbtrfs-dev libgpgme-dev
+
       - name: Build ECM Distro Tools
         run: |
           export VERSION=${GITHUB_REF_NAME}

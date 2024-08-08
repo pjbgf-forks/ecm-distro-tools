@@ -24,7 +24,9 @@ RUN zypper update -y && \
         make               \
         zlib-devel         \ 
         libtool            \
-        net-tools       && \
+        net-tools          \
+        libbtrfs-devel     \
+        libgpgme-devel  && \
     zypper clean --all 
 
 ARG GO_VERSION=1.20.4
