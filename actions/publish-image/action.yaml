@@ -179,6 +179,12 @@ runs:
     run: |
       go install github.com/rancherlabs/slsactl@latest
 
+  # Prime images will be signed using cosign.
+  # Additionally, both the provenance and SBOMs will be extracted
+  # from the image, signed and pushed to the target registry.
+  # 
+  # The slsav0.2 provenance will be converted into slsav1.
+  # The spdx SBOM will be converted into Cyclonedx.
   - name: Build and push image [Prime]
     shell: bash
     if: ${{ inputs.push-to-prime == true || inputs.push-to-prime == 'true' }}
@@ -190,12 +196,20 @@ runs:
       IMG_NAME="${REPO}/${{ inputs.image }}@$(head -n 1 ${IID_FILE})"
 
       cosign sign --oidc-provider=github-actions --yes "${IMG_NAME}"
-        
+
       if slsactl download provenance --format=slsav1 "${IMG_NAME}" > provenance-slsav1.json; then
         cat provenance-slsav1.json
         cosign attest --yes --predicate provenance-slsav1.json --type slsaprovenance1 "${IMG_NAME}"
       else
         echo "ERROR: Failed to generate slsav1 provenance. Check whether the image is present in the Prime registry."
+        exit 3
+      fi
+
+      if slsactl download sbom --platform linux/amd64 --format=cyclonedxjson "${IMG_NAME}" > sbom-cyclonedx.json; then
+        cat sbom-cyclonedx.json
+        cosign attest --yes --predicate sbom-cyclonedx.json --type cyclonedx "${IMG_NAME}"
+      else
+        echo "ERROR: Failed to attest sbom."
         exit 3
       fi
     env:
