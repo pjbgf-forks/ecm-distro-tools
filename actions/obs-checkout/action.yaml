@@ -1,0 +1,67 @@
+name: obs-checkout
+
+inputs:
+  package-name:
+    description: |
+      The name of the OBS package.
+    required: true
+    type: string
+
+  upstream-project:
+    description: |
+      The name for the upstream OBS project to be branched.
+    required: true
+    type: string
+
+  target-project:
+    description: |
+      The name of the target OBS project that will be created (or updated)
+      with the temporary changes, ahead of the submit request to the source
+      project.
+    required: true
+    type: string
+
+  obs-config:
+    description: |
+      The OBS configuration that contains the credentials for osc.
+      Ensure this data is stored in a secret so that it is obfuscated on
+      the GitHub logs.
+    required: true
+    type: string
+
+runs:
+  using: composite
+
+  steps:
+  - name: Install dependencies
+    shell: bash
+    run: |
+      zypper in -y osc
+
+  - name: Set OBS config
+    shell: bash
+    run: |
+      mkdir -p ~/.config/osc
+      echo "${OBS_CONFIG}" > ~/.config/osc/oscrc
+    env:
+      OBS_CONFIG: ${{ inputs.obs-config }}
+
+  - name: Branch and Checkout
+    shell: bash
+    run: |
+      echo "Branching ${SRC_PROJECT} to ${DST_PROJECT}"
+      osc branch --force "${SRC_PROJECT}" "${PKG_NAME}" "${DST_PROJECT}" "${PKG_NAME}"
+      
+      echo "Checking out ${DST_PROJECT}/${PKG_NAME}"
+      osc checkout "${DST_PROJECT}" "${PKG_NAME}"
+
+    env:
+      PKG_NAME: ${{ inputs.package-name }}
+      SRC_PROJECT: ${{ inputs.upstream-project }}
+      DST_PROJECT: ${{ inputs.target-project }}
+
+  - name: Delete config
+    if: always()
+    shell: bash
+    run: |
+      rm -rf ~/.config/osc
