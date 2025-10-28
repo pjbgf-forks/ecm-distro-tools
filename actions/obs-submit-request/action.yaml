@@ -1,0 +1,136 @@
+# This GitHub action triggers an OBS submit request based on a new release.
+#
+# Reference usage:
+#
+#    steps:
+#      ...
+#      - name: OBS submit request
+#        uses: pjbgf/obs-actions/submit-request@main
+#        with:
+#          new-version: v0.0.9 # gh release list --limit 2 --json tagName,createdAt --jq '.[].tagName' | head -n1
+#          old-version: v0.0.8 # gh release list --limit 2 --json tagName,createdAt --jq '.[].tagName' | tail -n1
+#          package-name: qubesome
+#          upstream-project: devel:languages:go/qubesome
+#          target-project: home:pjbgf:qubesome:cli:release
+
+name: submit-request
+
+inputs:
+  old-version:
+    description: |
+      The last released version (e.g. previous release tag).
+    required: true
+    type: string
+
+  new-version:
+    description: |
+      The new version being released (e.g. latest release tag).
+    required: true
+    type: string
+
+  package-name:
+    description: |
+      The name of the OBS package.
+    required: true
+    type: string
+
+  upstream-project:
+    description: |
+      The name for the upstream OBS project to be branched.
+    required: true
+    type: string
+
+  target-project:
+    description: |
+      The name of the target OBS project that will be created (or updated)
+      with the temporary changes, ahead of the submit request to the source
+      project.
+    required: true
+    type: string
+
+  obs-config:
+    description: |
+      The OBS configuration that contains the credentials for osc.
+      Ensure this data is stored in a secret so that it is obfuscated on
+      the GitHub logs.
+    required: true
+    type: string
+
+  source-ext:
+    description: |
+      The file extension for the source file.
+    default: tar.gz
+    type: string
+
+  submit-request:
+    description: |
+      Defines whether a submit request should be created. If set to false,
+      the changes are kept at the <target-project>/<package>.
+    default: false
+    type: boolean
+
+runs:
+  using: composite
+
+  steps:
+  - name: Install dependencies
+    run: |
+      zypper in -y gh osc sudo vim awk \
+          obs-service-go_modules obs-service-tar_scm \
+          obs-service-set_version obs-service-recompress \
+          obs-service-format_spec_file obs-service-download_files
+
+  - name: Set OBS config
+    shell: bash
+    run: |
+      mkdir -p ~/.config/osc
+      echo "${OBS_CONFIG}" > ~/.config/osc/oscrc
+    env:
+      OBS_CONFIG: ${{ inputs.obs-config }}
+
+  - name: Submit Request
+    shell: bash
+    run: |
+      echo "Submit request to ${SRC_PROJECT} for bumping ${PKG_NAME} from ${OLD_VERSION} to ${NEW_VERSION}"
+      osc branch --force "${SRC_PROJECT}" "${DST_PROJECT}"
+      osc checkout "${DST_PROJECT}" "${PKG_NAME}"
+      cd "${DST_PROJECT}/${PKG_NAME}"
+      pwd
+
+      sed -i "s;${OLD_VERSION};${NEW_VERSION};g" _service
+      cat _service
+
+      osc service runall
+      osc diff
+      echo "remove ${PKG_NAME}-${OLD_VERSION}.${SOURCE_EXT}"
+      osc rm "${PKG_NAME}-${OLD_VERSION}.${SOURCE_EXT}"
+      echo "add ${PKG_NAME}-${NEW_VERSION}.${SOURCE_EXT}"
+      osc add "${PKG_NAME}-${NEW_VERSION}.${SOURCE_EXT}"
+      
+      # Build does not seem to work within a GitHub Runner. Futher investigation required.
+      # mount: /var/tmp/build-root/openSUSE_Factory-x86_64/proc: permission denied.
+      # osc build --trust-all-projects
+      
+      awk 'NR==2,/^-------------------------------------------------------------------$/' "${PKG_NAME}.changes" | \
+        tail -n +3 | head -n -1 > commit-msg
+      
+      cat commit-msg
+      osc commit --file commit-msg
+
+      if [[ "${SUBMIT}" == "true" ]]; then
+        osc submitrequest -m 'version update to ${NEW_VERSION}'
+      fi      
+    env:
+      NEW_VERSION: ${{ inputs.new-version }}
+      OLD_VERSION: ${{ inputs.old-version }}
+      PKG_NAME: ${{ inputs.package-name }}
+      SRC_PROJECT: ${{ inputs.upstream-project }}
+      DST_PROJECT: ${{ inputs.target-project }}
+      SOURCE_EXT: ${{ inputs.source-ext }}
+      SUBMIT: ${{ inputs.submit-request }}
+
+  - name: Delete config
+    if: always()
+    shell: bash
+    run: |
+      rm -rf ~/.config/osc
